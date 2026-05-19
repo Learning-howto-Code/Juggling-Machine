@@ -1,7 +1,10 @@
 
+from machine import Pin, PWM, machine # type: ignore
+from time import sleep, time
+import logging
+import threading
 
-from tmc.TMC_5160 import  (
-    Tmc2209,
+from tmc.TMC_5160 import  ( # type: ignore
     stopMode,
     Loglevel,
     Board,
@@ -13,6 +16,8 @@ from tmc.TMC_5160 import  (
     TmcMotionControlStepDir,
 )
 
+range_angle = 120
+distance = -((round(range_angle/360)*200))
 motor = TMC_5160(
     spi_id=0,
     cs_pin=17,
@@ -24,6 +29,8 @@ motor = TMC_5160(
     en_pin=6,
     DIAG0=31
 )
+servoLeft= machine.Pin(29)
+servoRight= machine.Pin(27)
 # these functions change settings in the TMC register
 # -----------------------------------------------------------------------
 tmc.set_direction_reg(False)
@@ -74,7 +81,62 @@ else:
     print("Movement was not completed")
 
 # ^^is all setup^^
-stop_one = tmc.do_homing(26, 1, 50)
+tmc.set_motor_enabled(True)
+def home():
+    stopLeft = tmc.do_homing(26, 1, 50)
+    positionLeft = tmc.current_pos
+
+    stopRight= tmc.do_homing(27, 1, 50)
+    positionRight = tmc.current_pos
+
+servo = PWM(servoLeft)
+max_duty = 7864
+min_duty = 1802
+half_duty = int(max_duty/2)
+servo.freq (50)
+def moveLeft(): # needs to move clockwise to launch ball
+    start = time.time_ns()
+    def run_motor():
+        tmc.run_to_position_fullsteps(distance)
+        tmc.run_to_position_fullsteps(-distance)
+    def run_servo():
+        servo.duty_u16(half_duty)
+        servo.duty_u16(0)
+    left_thread_motor = threading.Thread(target=run_motor, name="left_motor_thread")
+    left_thread_servo = threading.Thread(target=run_servo, name="left_servo_thread")
+    left_thread_motor.start(), left_thread_servo.start() # uses threads so that both can move at the same time
+    left_total = time.time_ns() - start
+    return left_total
+def moveRight():
+    start = time.time_ns()
+    def run_motor():
+        tmc.run_to_position_fullsteps(-distance)
+        tmc.run_to_position_fullsteps(distance)
+    def run_servo():
+        servo.duty_u16(-(half_duty))
+        servo.duty_u16(0)
+    right_thread_motor = threading.Thread(target=run_motor, name="right_motor_thread")
+    right_thread_servo = threading.Thread(target=run_servo, name="right_servo_thread")
+    right_thread_motor.start(), right_thread_servo.start() # uses threads so that both can move at the same time    
+    end = time.time_ns()
+    right_total = end - start
+    return right_total
+
+while True:
+    left_total = moveLeft()/1_000_000_000 # converts nanoseconds to seconds
+    print("left arm run time is {left_total} seconds")
+    sleep(left_total/2)
+    right_total = moveRight()/1_000_000_000 # converts nanoseconds to seconds
+    print("right arm run time is {right_total} seconds")
+    sleep(right_total/2)
+
+
+
+
+
+
+    
+
 
 
 

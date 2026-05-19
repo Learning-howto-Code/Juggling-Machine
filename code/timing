@@ -1,0 +1,7 @@
+flowchart TD
+    A("Machine boots up") 
+    A --> B("Left arm goes up, servo rotates ~45 degrees")
+    B-->C("Left arm reaches apex")
+    C-->D("Right arm starts moving up, servo rotates")
+    D-->E("Left arm is back down, right is at apex")
+    E-->B
