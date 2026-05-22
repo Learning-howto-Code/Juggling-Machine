@@ -8,6 +8,8 @@ An automatic juggling machine, using a rpi pico, 2 nema 23 stepper motors and so
 # CAD
 
 <img width="967" height="615" alt="Screenshot 2026-05-21 at 7 58 25 PM" src="https://github.com/user-attachments/assets/cf1f8791-88a9-401a-8424-3de67898d786" />
+
+### Check out the video of the render here!
 https://cdn.hackclub.com/019e38e4-be2f-7099-8626-64a2c3647a4a/juggling_machine_video.mp4
 
 # Code
