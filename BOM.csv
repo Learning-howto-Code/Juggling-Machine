@@ -1,11 +1,11 @@
 Item name,unit cost,quantity,shipping,full cost,link,use/notes
 Stepper Motor,$17.80,2,$16.50,$54.20,https://www.omc-stepperonline.com/nema-23-bipolar-1-8deg-1-26nm-178-4oz-in-2-8a-2-5v-57x57x56mm-4-wires-23hs22-2804s,
 Servo,N/A,2,$0.00,$0.99,https://www.aliexpress.us/item/3256808303872992.html?spm=a2g0o.cart.0.0.145438darMAZon&mp=1&pdp_npi=6%40dis%21USD%21USD+9.81%21USD+0.99%21%21USD+0.99%21%21%21%4021030a4b17781790228053088e6035%2112000045373698725%21ct%21US%216415217639%21%211%210%21&_gl=1*5ditl4*_gcl_au*OTQ2Mzc0MTkzLjE3NzgxNzg5MjU.*_ga*NDcxNTk5ODQzLjE3NzgxNzg5Mjk.*_ga_VED1YSGNC7*czE3NzgxNzg5MjkkbzEkZzEkdDE3NzgxNzkwMDYkajQ5JGwwJGgw&gatewayAdapt=glo2usa,
-2020 extrusion,$1.50,2,$3.00,$5.50,https://jlcmc.com/shopcart/cart?source=fa,
+2020 extrusion,$1.50,2,$3.00,$5.50,https://jlcmc.com/product/s/T01/TXCJ/extruded-aluminum-t-slot-20-series(eu)?k=TXCJ-H6-2020-L600&productModelNumber=TXCJ-H6-2020-L%5B50~6000%2F0.1%5D,
 Motor Driver,NA,2 pack,$6.00,$42.00,https://biqu.equipment/products/tmc5160-pro-v1-0?variant=40301980614754,
-Screws,NA,,,,,I got them already 
-rpi pico,$5.00,1,$6.00,$11.00,,
+Screws,NA,,,,I have these,I got them already 
+rpi pico,$5.00,1,$12.00,$11.00,https://www.lcsc.com/product-detail/C41407547.html?spm=wm.gwc.xh.0.tp___wm.sy.ssl.gwc&lcsc_vid=FgJXA1ZRFlleBFBREwNZBldTQFReAVVfQVVWBFAHQlkxVlNeR1FWVV1XRFVaXjsOAxUeFF5JWBEPFBcWGBMaSQgFBAJABAsLWA%3D%3D,
 capacitor,$0.25,2,,$0.45,https://www.lcsc.com/product-detail/C233122.html?s_z=n_q_t_electrolytic%2520capacitor%2520&spm=wm.fly.bg.11.xh___wm.ssy.tc.0.tz&lcsc_vid=TlYLVQFUEgVcBFcARANWBQJVRlJfUgICRFFYAwZTFQQxVlNRTlJWX1FSR1ZXXzsOAxUeFF5JWBYZEEoKFBINSQcJGk4dAgUUFAk%3D,
 buck converter,,1,,,,I already have this
-PCB,$4.00,1,$3.00,$7.50,https://cart.jlcpcb.com/shopcart/cart/,
+PCB,$4.00,1,$3.00,$7.50,https://cart.jlcpcb.com/shopcart/cart/,Not sure how to link the quote page
 ,,,,$121.64,,
