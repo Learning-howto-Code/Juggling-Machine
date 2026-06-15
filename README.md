@@ -28,6 +28,6 @@ The main code is in main.py, with test scripts to make sure that each part is wo
 | Capacitor | $0.25 | 2 | — | $0.45 | [LCSC](https://www.lcsc.com/product-detail/C233122.html) | |
 | Buck Converter | — | 1 | — | — | — | Already have |
 | PCB | $4.00 | 1 | $3.00 | $7.50 | [JLCPCB](https://cart.jlcpcb.com/shopcart/cart/) | |
-| | | | **Total** | **$1304** | | |
+| | | | **Total** | **$134** | | |
 
 *Claude formatted my BOM*
