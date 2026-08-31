@@ -190,7 +190,8 @@
         0.0,
         0.0,
         0.2,
-        0.5
+        0.5,
+        1.0
       ],
       "tuning_pattern_settings": {
         "diff_pair_defaults": {
@@ -520,7 +521,7 @@
       "plot": "",
       "pos_files": "",
       "specctra_dsn": "",
-      "step": "",
+      "step": "../../../Downloads/juggling_machine_pcbv3.step",
       "svg": "",
       "vrml": ""
     },
@@ -626,7 +627,7 @@
     "meta": {
       "version": 1
     },
-    "net_format_name": "",
+    "net_format_name": "KiCad",
     "ngspice": {
       "fix_include_paths": true,
       "meta": {

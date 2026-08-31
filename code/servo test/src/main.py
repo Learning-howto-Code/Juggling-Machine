@@ -1,10 +1,11 @@
+import time
+
 import board
 import pwmio
 from adafruit_motor import servo
-import time
 
-# 50Hz PWM on GP16
-pwm = pwmio.PWMOut(board.GP16, frequency=50)
+# signal wire on GP22 (physical pin 29)
+pwm = pwmio.PWMOut(board.GP22, duty_cycle=0, frequency=50)
 my_servo = servo.Servo(pwm)
 
 while True:

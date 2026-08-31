@@ -1,4 +1,4 @@
-26772869436363490
+26788923359717197
 Audio_Module
 Reverb_BTDR-1H
 Digital Reverberation Unit, http://www.belton.co.kr/inc/downfile.php?seq=17&file=pdf (footprint from http://www.uk-electronic.de/PDF/BTDR-1.pdf)
@@ -70902,6 +70902,34 @@ module pcb
 0
 7
 7
+Mosfet m2
+LED-SMD_3P-L3.9-W3.9-FD
+
+
+0
+3
+3
+Mosfet m2
+SOD-323_L1.8-W1.3-LS2.5-RD
+1SS404
+
+0
+2
+2
+Mosfet m2
+SOT-223-4_L6.5-W3.5-P2.30-LS7.0-BR
+
+
+0
+4
+4
+Mosfet m2
+TSOP-6_L3.0-W1.5-P0.95-LS2.8-BL
+
+
+0
+6
+6
 Motors
 Vybronics_VZ30C1T8219732L
 Vibration motor, 2.3-3.2V, 14000rpm, 0.7G, https://www.vybronics.com/wp-content/uploads/datasheet-files/Vybronics-VZ30C1T8219732L-datasheet.pdf
@@ -106371,3 +106399,38 @@ CD4017BE
 0
 16
 16
+tmc driver
+BTT_TMC5160T_Pro_V1.1
+BIGTREETECH TMC5160T Pro V1.1 stepper driver module. StepStick/Pololu-compatible: 15.24 x 20.32 mm PCB, 2x8 pins on 2.54 mm pitch, rows 12.70 mm apart, plus DIAG0/DIAG1 breakout holes. Module is ~23 mm tall with heatsink - keep vertical clearance. Geometry from BTT TMC5160_Pro V1.1-SIZE.pdf.
+stepstick pololu stepper driver TMC5160 BIGTREETECH
+0
+18
+18
+uv led
+LED-SMD_3P-L3.9-W3.9-FD
+
+
+0
+3
+3
+uv led
+SOD-323_L1.8-W1.3-LS2.5-RD
+1SS404
+
+0
+2
+2
+uv led
+SOT-223-4_L6.5-W3.5-P2.30-LS7.0-BR
+
+
+0
+4
+4
+uv led
+TSOP-6_L3.0-W1.5-P0.95-LS2.8-BL
+
+
+0
+6
+6

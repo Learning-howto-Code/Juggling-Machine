@@ -5,7 +5,7 @@
 Servo myServo;
 
 void setup() {
-  myServo.attach(9);  // signal wire on pin 9
+  myServo.attach(22);  // signal wire on pin 22
 }
 
 void loop() {

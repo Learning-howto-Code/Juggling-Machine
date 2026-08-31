@@ -1,35 +1,29 @@
-# Rui Santos & Sara Santos - Random Nerd Tutorials
-# Complete project details at https://RandomNerdTutorials.com/raspberry-pi-pico-servo-motor-micropython/
+from machine import Pin, PWM  # type: ignore
+import time
 
-from machine import Pin, PWM
-from time import sleep
+# Standard hobby servo: 50 Hz, ~0.5 ms (0 deg) to ~2.5 ms (180 deg) pulse
+MIN_NS = 500_000
+MAX_NS = 2_500_000
 
-# Set up PWM Pin for servo control
-servo_pin = machine.Pin(26)
-servo = PWM(servo_pin)
 
-# Set Duty Cycle for Different Angles
-max_duty = 7864
-min_duty = 1802
-half_duty = int(max_duty/2)
+def make_servo(gpio):
+    pwm = PWM(Pin(gpio))
+    pwm.freq(50)
+    return pwm
 
-#Set PWM frequency
-frequency = 50
-servo.freq (frequency)
+
+def set_angle(pwm, angle):
+    angle = min(max(angle, 0), 180)
+    pwm.duty_ns(int(MIN_NS + (MAX_NS - MIN_NS) * angle / 180))
+
+
+servo1 = make_servo(22)
 
 try:
     while True:
-        #Servo at 0 degrees
-        servo.duty_u16(min_duty)
-        sleep(2)
-        #Servo at 90 degrees
-        servo.duty_u16(half_duty)
-        sleep(2)
-        #Servo at 180 degrees
-        servo.duty_u16(max_duty)
-        sleep(2)    
-      
+        for angle in (0, 90, 180):
+            print("turning to", angle)
+            set_angle(servo1, angle)
+            time.sleep(1)
 except KeyboardInterrupt:
-    print("Keyboard interrupt")
-    # Turn off PWM 
-    servo.deinit()
+    servo1.deinit()
