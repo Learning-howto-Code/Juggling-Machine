@@ -1,14 +1,20 @@
 """
-Slow-spin test for both stepper drivers: BIGTREETECH TMC5160T Pro V1.0 on a
-Raspberry Pi Pico 2 running MicroPython. Tests one driver at a time (ACTIVE_DRIVER).
+Top speed test for one stepper driver: BIGTREETECH TMC5160T Pro V1.0 on a
+Raspberry Pi Pico 2 running MicroPython. Tests one driver (ACTIVE_DRIVER).
 
-The module hard-wires SD_MODE=1 and SPI_MODE=1, so SPI is only used to
-configure the TMC5160 - the motor itself moves from STEP/DIR pulses.
+The motor ramps up through SPEED_STEPS_RPM, holding each speed for HOLD_S seconds.
+At each speed it prints SG_RESULT and the speed the driver measured (from TSTEP).
+SG_RESULT drops as the motor runs out of torque, and sits at 0 once it loses sync
+(it buzzes instead of turning). The last speed that ran smoothly is about the top
+speed at this current and supply voltage.
+
+STEP pulses come from hardware PWM, so the speed isn't limited by how fast
+MicroPython can toggle a pin. Press Ctrl-C at any time to ramp down and stop.
 
 VM (24 V) must be on before running this, the TMC5160 logic is powered from it.
 """
 
-from machine import Pin, SPI  # type: ignore
+from machine import Pin, SPI, PWM  # type: ignore
 import math
 import time
 
@@ -26,13 +32,25 @@ DRIVER_PINS = {
 ACTIVE_DRIVER = 2     # which driver to test (1 or 2), the other stays disabled
 
 RSENSE = 0.075        # ohms, fitted on the TMC5160T Pro V1.0 (3.1 A RMS max)
-RUN_CURRENT = 0.8     # A RMS, motor is rated 2.8 A - kept low for bench testing
+RUN_CURRENT = 0.8     # A RMS, motor is rated 2.8 A - more current = more torque at speed
 HOLD_CURRENT = 0.4    # A RMS
 MRES = 4              # 0=256 ... 4=16 ... 8=full step microsteps per STEP pulse
 MICROSTEPS = 256 >> MRES
 FULL_STEPS_PER_REV = 200
-RPM = 10      # one revolution every 6 s
-REVOLUTIONS = 3
+
+# Speed ramp
+FORWARD = True
+START_RPM = 30        # starts here instantly, below the speed where it could fail to start
+SPEED_STEPS_RPM = [60, 120, 180, 240, 300]
+ACCEL_RPM_PER_S = 50 # acceleration between speeds, lower it if it stalls while speeding up
+HOLD_S = 2            # time at each speed
+RAMP_UPDATE_MS = 5    # how often the speed is updated while ramping
+
+# Stall check: SG_RESULT stuck at 0 means the motor lost sync
+STOP_ON_STALL = True
+STALL_CHECK_MIN_RPM = 100  # SG_RESULT isn't meaningful at low speed
+STALL_SAMPLES = 10    # consecutive SG_RESULT=0 reads counted as a stall
+SAMPLE_MS = 20        # time between SG_RESULT reads
 
 # TMC5160 registers
 GCONF = 0x00
@@ -41,10 +59,12 @@ IOIN = 0x04
 GLOBALSCALER = 0x0B
 IHOLD_IRUN = 0x10
 TPOWERDOWN = 0x11
+TSTEP = 0x12
 CHOPCONF = 0x6C
 DRV_STATUS = 0x6F
 
 VFS = 0.325           # full scale sense voltage (TMC5160 datasheet)
+FCLK = 12_000_000     # internal clock, CLK is tied to GND on the module
 TMC5160_VERSION = 0x30
 
 spi = SPI(
@@ -135,6 +155,10 @@ class Driver:
     def disable(self):
         self.en.value(1)
 
+    def check_error(self):
+        if self.diag0.value() == 0:
+            raise RuntimeError("Driver %d: DIAG0 went low (driver error)" % self.number)
+
     def print_status(self):
         gstat = self.read_reg(GSTAT)
         drv = self.read_reg(DRV_STATUS)
@@ -160,31 +184,59 @@ class Driver:
         )
         print("  DIAG0 =", self.diag0.value(), " DIAG1 =", self.diag1.value())
 
-        # Short to supply (s2vsa/s2vsb) or open load (ola/olb) at shutdown usually means
-        # the motor's coil pairs are mixed up across the screw terminal
-        if (gstat >> 1) & 1 and drv & ((1 << 12) | (1 << 13) | (1 << 29) | (1 << 30)):
-            print("  HINT: check the motor wire order in the screw terminal. Each coil must be on")
-            print("        its own pair (pins 1-2 = coil A, pins 3-4 = coil B). Two wires of the same")
-            print("        coil read ~1 ohm between them. Power off 24 V before rewiring.")
+
+class StepGenerator:
+    """STEP pulses from hardware PWM at 50% duty, one pulse per microstep."""
+
+    def __init__(self, pin):
+        self.pin = pin
+        self.pwm = None
+        self.rpm = 0
+
+    def set_rpm(self, rpm):
+        if self.pwm is None:
+            self.pwm = PWM(self.pin)
+        self.pwm.freq(int(rpm * FULL_STEPS_PER_REV * MICROSTEPS / 60))
+        self.pwm.duty_u16(32768)
+        self.rpm = rpm
+
+    def stop(self):
+        if self.pwm is not None:
+            self.pwm.deinit()
+            self.pwm = None
+        self.pin.init(Pin.OUT, value=0)
+        self.rpm = 0
 
 
-def spin(drivers, revolutions, rpm, forward):
-    """Step all drivers together, one STEP pulse each per loop."""
-    steps = int(revolutions * FULL_STEPS_PER_REV * MICROSTEPS)
-    half_period_us = int(60_000_000 / (rpm * FULL_STEPS_PER_REV * MICROSTEPS) / 2)
-    for d in drivers:
-        d.direction.value(1 if forward else 0)
-    time.sleep_us(10)
-    for i in range(steps):
-        for d in drivers:
-            if d.diag0.value() == 0:
-                raise RuntimeError("Driver %d: DIAG0 went low after %d steps (driver error)" % (d.number, i))
-        for d in drivers:
-            d.step.value(1)
-        time.sleep_us(half_period_us)
-        for d in drivers:
-            d.step.value(0)
-        time.sleep_us(half_period_us)
+def ramp(driver, gen, to_rpm):
+    """Change speed linearly from the current speed at ACCEL_RPM_PER_S."""
+    from_rpm = gen.rpm
+    duration_ms = abs(to_rpm - from_rpm) * 1000 / ACCEL_RPM_PER_S
+    start = time.ticks_ms()
+    while True:
+        elapsed = time.ticks_diff(time.ticks_ms(), start)
+        if elapsed >= duration_ms:
+            break
+        gen.set_rpm(from_rpm + (to_rpm - from_rpm) * elapsed / duration_ms)
+        driver.check_error()
+        time.sleep_ms(RAMP_UPDATE_MS)
+    gen.set_rpm(to_rpm)
+
+
+def hold(driver, gen, seconds):
+    """Run at the current speed, reading SG_RESULT. Returns (samples, stalled)."""
+    samples = []
+    zeros = 0
+    end = time.ticks_add(time.ticks_ms(), int(seconds * 1000))
+    while time.ticks_diff(end, time.ticks_ms()) > 0:
+        driver.check_error()
+        sg = driver.read_reg(DRV_STATUS) & 0x3FF
+        samples.append(sg)
+        zeros = zeros + 1 if sg == 0 else 0
+        if STOP_ON_STALL and gen.rpm >= STALL_CHECK_MIN_RPM and zeros >= STALL_SAMPLES:
+            return samples, True
+        time.sleep_ms(SAMPLE_MS)
+    return samples, False
 
 
 print("---")
@@ -194,17 +246,47 @@ print("---")
 # Create both so every CSN is high and every EN is off before any SPI traffic
 all_drivers = {n: Driver(n, **pins) for n, pins in DRIVER_PINS.items()}
 driver = all_drivers[ACTIVE_DRIVER]
+gen = StepGenerator(driver.step)
+top_rpm = 0
 
 try:
     driver.setup()
     driver.enable()
+    driver.direction.value(1 if FORWARD else 0)
+    time.sleep_us(10)
 
-    print("Forward %d rev at %d RPM" % (REVOLUTIONS, RPM))
-    spin([driver], REVOLUTIONS, RPM, forward=True)
-    time.sleep(1)
-    print("Backward %d rev at %d RPM" % (REVOLUTIONS, RPM))
-    spin([driver], REVOLUTIONS, RPM, forward=False)
+    print("Ramping %s at %d RPM/s, %d s at each speed, %d A" % (
+        "forward" if FORWARD else "backward", ACCEL_RPM_PER_S, HOLD_S, RUN_CURRENT))
+    print("  target RPM | measured RPM | step freq | SG_RESULT min / avg / max")
+    gen.set_rpm(START_RPM)
+    for target in SPEED_STEPS_RPM:
+        ramp(driver, gen, target)
+        samples, stalled = hold(driver, gen, HOLD_S)
+
+        # TSTEP is the time between 1/256 microsteps in fCLK cycles, as measured by the driver
+        tstep = driver.read_reg(TSTEP) & 0xFFFFF
+        measured = FCLK * 60 / (tstep * FULL_STEPS_PER_REV * 256) if tstep else 0
+        print("  %10d | %12d | %6.1f kHz | %d / %d / %d" % (
+            target, measured, target * FULL_STEPS_PER_REV * MICROSTEPS / 60_000,
+            min(samples), sum(samples) // len(samples), max(samples)))
+
+        if stalled:
+            print("  Stalled at %d RPM (SG_RESULT stuck at 0)" % target)
+            gen.stop()
+            break
+        top_rpm = target
+
+    if gen.rpm:
+        print("Ramping down")
+        ramp(driver, gen, START_RPM)
+except KeyboardInterrupt:
+    if gen.rpm:
+        print("Ctrl-C, ramping down")
+        ramp(driver, gen, START_RPM)
 finally:
+    gen.stop()
+    if top_rpm:
+        print("Top speed without stalling: %d RPM (%.1f rev/s)" % (top_rpm, top_rpm / 60))
     driver.print_status()  # before disabling, turning EN off clears the fault flags
     driver.disable()
     print("---")

@@ -1,9 +1,13 @@
 """
-Slow-spin test for both stepper drivers: BIGTREETECH TMC5160T Pro V1.0 on a
-Raspberry Pi Pico 2 running MicroPython. Tests one driver at a time (ACTIVE_DRIVER).
+Sensorless homing test with StallGuard2: BIGTREETECH TMC5160T Pro V1.0 on a
+Raspberry Pi Pico 2 running MicroPython. Tests one driver (ACTIVE_DRIVER).
 
-The module hard-wires SD_MODE=1 and SPI_MODE=1, so SPI is only used to
-configure the TMC5160 - the motor itself moves from STEP/DIR pulses.
+The motor turns toward the end stop until StallGuard reports a stall, then backs
+off. This repeats HOMING_RUNS times - after the first run the stall should come
+back at the same place, so the step count shows how repeatable homing is.
+
+StallGuard2 only works in SpreadCycle and above a minimum speed. A stall is
+reported on DIAG1 (diag1_stall) and in DRV_STATUS, the script stops on either.
 
 VM (24 V) must be on before running this, the TMC5160 logic is powered from it.
 """
@@ -17,7 +21,7 @@ PIN_SCK = 18
 PIN_MOSI = 19
 PIN_MISO = 16
 
-# Per-driver pins. DIAG0 is open drain with a 10k pull-up on the PCB, low = driver error.
+# Per-driver pins. DIAG0/DIAG1 are open drain with 10k pull-ups on the PCB, active low.
 # EN 2 is not routed on the PCB - it needs a jumper wire to GPIO8.
 DRIVER_PINS = {
     1: dict(en=20, csn=17, step=10, dir=11, diag0=6, diag1=7),
@@ -31,8 +35,20 @@ HOLD_CURRENT = 0.4    # A RMS
 MRES = 4              # 0=256 ... 4=16 ... 8=full step microsteps per STEP pulse
 MICROSTEPS = 256 >> MRES
 FULL_STEPS_PER_REV = 200
-RPM = 10      # one revolution every 6 s
-REVOLUTIONS = 3
+
+# Homing
+HOMING_RPM = 120       # StallGuard gets noisy at low speed, try 90-120 if SG_RESULT jumps around
+HOME_FORWARD = True  # direction toward the end stop
+MAX_HOMING_REVS = 2   # give up if nothing stalls within this
+BACKOFF_REVS = 0.5    # distance away from the stop after each stall (direction is automatic), more than the blanking
+HOMING_RUNS = 5
+STALL_BLANK_FULL_STEPS = 20  # ignore stalls while the motor gets going, it grinds this long if it starts at the stop
+
+# StallGuard threshold, -64..63. Higher = less sensitive.
+# Stops before reaching the stop -> raise SGT. Grinds against the stop without stopping -> lower SGT.
+# Good tuning: SG_RESULT well above 0 while moving freely, 0 when stalled.
+SGT = 3
+SFILT = 1             # 1 = filter SG_RESULT over 4 full steps, evens out the high/low alternation between full steps
 
 # TMC5160 registers
 GCONF = 0x00
@@ -41,10 +57,13 @@ IOIN = 0x04
 GLOBALSCALER = 0x0B
 IHOLD_IRUN = 0x10
 TPOWERDOWN = 0x11
+TCOOLTHRS = 0x14
 CHOPCONF = 0x6C
+COOLCONF = 0x6D
 DRV_STATUS = 0x6F
 
 VFS = 0.325           # full scale sense voltage (TMC5160 datasheet)
+FCLK = 12_000_000     # internal clock, CLK is tied to GND on the module
 TMC5160_VERSION = 0x30
 
 spi = SPI(
@@ -123,6 +142,25 @@ class Driver:
 
         self.write_reg(GSTAT, 0b111)  # clear reset / drv_err / uv_cp flags
 
+    def setup_stallguard(self, rpm):
+        # TSTEP is the time between 1/256 microsteps in fCLK cycles. Stall detection is on
+        # while TSTEP <= TCOOLTHRS, so this turns it on above 2/3 of the homing speed.
+        tstep = FCLK * 60 / (rpm * FULL_STEPS_PER_REV * 256)
+        tcoolthrs = int(tstep * 1.5)
+        self.write_reg(TCOOLTHRS, tcoolthrs)
+        self.write_reg(COOLCONF, (SFILT << 24) | ((SGT & 0x7F) << 16))  # SEMIN=0 keeps coolStep off
+
+        gconf = self.read_reg(GCONF) | (1 << 8)  # diag1_stall: DIAG1 low on stall
+        self.write_reg(GCONF, gconf)
+        if self.read_reg(GCONF) != gconf:
+            raise RuntimeError("Driver %d: GCONF readback mismatch" % self.number)
+        if gconf & (1 << 2):
+            raise RuntimeError("Driver %d: StealthChop is on, StallGuard2 needs SpreadCycle" % self.number)
+        print(
+            "Driver %d: StallGuard SGT=%d SFILT=%d, TCOOLTHRS=%d (TSTEP at %d RPM ~%d), GCONF=0x%02x"
+            % (self.number, SGT, SFILT, tcoolthrs, rpm, tstep, gconf)
+        )
+
     def enable(self):
         self.en.value(0)
         time.sleep_ms(100)
@@ -158,6 +196,7 @@ class Driver:
                 (drv >> 16) & 0x1F,
             )
         )
+        print("  stallguard=%d sg_result=%d" % ((drv >> 24) & 1, drv & 0x3FF))
         print("  DIAG0 =", self.diag0.value(), " DIAG1 =", self.diag1.value())
 
         # Short to supply (s2vsa/s2vsb) or open load (ola/olb) at shutdown usually means
@@ -168,23 +207,48 @@ class Driver:
             print("        coil read ~1 ohm between them. Power off 24 V before rewiring.")
 
 
-def spin(drivers, revolutions, rpm, forward):
-    """Step all drivers together, one STEP pulse each per loop."""
-    steps = int(revolutions * FULL_STEPS_PER_REV * MICROSTEPS)
-    half_period_us = int(60_000_000 / (rpm * FULL_STEPS_PER_REV * MICROSTEPS) / 2)
-    for d in drivers:
-        d.direction.value(1 if forward else 0)
+def move(driver, steps, rpm, forward, stop_on_stall=False):
+    """Step one driver at constant speed, sampling SG_RESULT once per full step.
+
+    With stop_on_stall, stops as soon as DIAG1 or DRV_STATUS reports a stall.
+    Returns (steps taken, what reported the stall or None, SG_RESULT samples).
+    """
+    period_us = int(60_000_000 / (rpm * FULL_STEPS_PER_REV * MICROSTEPS))
+    blank = STALL_BLANK_FULL_STEPS * MICROSTEPS
+    samples = []
+    driver.direction.value(1 if forward else 0)
     time.sleep_us(10)
+    next_us = time.ticks_us()
     for i in range(steps):
-        for d in drivers:
-            if d.diag0.value() == 0:
-                raise RuntimeError("Driver %d: DIAG0 went low after %d steps (driver error)" % (d.number, i))
-        for d in drivers:
-            d.step.value(1)
-        time.sleep_us(half_period_us)
-        for d in drivers:
-            d.step.value(0)
-        time.sleep_us(half_period_us)
+        if driver.diag0.value() == 0:
+            raise RuntimeError("Driver %d: DIAG0 went low after %d steps (driver error)" % (driver.number, i))
+        if i >= blank and i % MICROSTEPS == 0:
+            # One datagram per full step: each read returns the previous full step's DRV_STATUS,
+            # the first one is left over from before the move so it is skipped
+            drv = driver.transfer(DRV_STATUS)[1]
+            if i > blank:
+                samples.append(drv & 0x3FF)
+                if stop_on_stall and (drv >> 24) & 1:
+                    return i, "DRV_STATUS", samples
+        if stop_on_stall and i >= blank and driver.diag1.value() == 0:
+            return i, "DIAG1", samples
+        # Timed from a running deadline so the SPI reads don't slow the motor down
+        while time.ticks_diff(next_us, time.ticks_us()) > 0:
+            pass
+        driver.step.value(1)
+        driver.step.value(0)
+        next_us = time.ticks_add(next_us, period_us)
+    return steps, None, samples
+
+
+def print_samples(samples):
+    if not samples:
+        print("  SG_RESULT: no samples")
+        return
+    print(
+        "  SG_RESULT min %d  avg %d  max %d  (%d full steps), last: %s"
+        % (min(samples), sum(samples) // len(samples), max(samples), len(samples), samples[-8:])
+    )
 
 
 print("---")
@@ -195,15 +259,33 @@ print("---")
 all_drivers = {n: Driver(n, **pins) for n, pins in DRIVER_PINS.items()}
 driver = all_drivers[ACTIVE_DRIVER]
 
+max_steps = int(MAX_HOMING_REVS * FULL_STEPS_PER_REV * MICROSTEPS)
+backoff_steps = int(BACKOFF_REVS * FULL_STEPS_PER_REV * MICROSTEPS)
+if BACKOFF_REVS * FULL_STEPS_PER_REV <= STALL_BLANK_FULL_STEPS:
+    raise ValueError("BACKOFF_REVS must be positive and longer than STALL_BLANK_FULL_STEPS")
+
 try:
     driver.setup()
+    driver.setup_stallguard(HOMING_RPM)
     driver.enable()
 
-    print("Forward %d rev at %d RPM" % (REVOLUTIONS, RPM))
-    spin([driver], REVOLUTIONS, RPM, forward=True)
-    time.sleep(1)
-    print("Backward %d rev at %d RPM" % (REVOLUTIONS, RPM))
-    spin([driver], REVOLUTIONS, RPM, forward=False)
+    for run in range(1, HOMING_RUNS + 1):
+        print("Homing run %d: %s at %d RPM" % (run, "forward" if HOME_FORWARD else "backward", HOMING_RPM))
+        steps, source, samples = move(driver, max_steps, HOMING_RPM, HOME_FORWARD, stop_on_stall=True)
+        print_samples(samples)
+        if source is None:
+            print("  No stall within %d rev. If it hit the stop, lower SGT or raise HOMING_RPM." % MAX_HOMING_REVS)
+            break
+        print("  Stall on %s after %d full steps" % (source, steps // MICROSTEPS))
+        if run > 1:
+            # Started BACKOFF_REVS away from the last stall, so it should stall there again
+            print("  Off by %+.1f full steps from the last stall" % ((steps - backoff_steps) / MICROSTEPS))
+
+        time.sleep_ms(200)
+        print("  Backing off %.2f rev" % BACKOFF_REVS)
+        _, _, samples = move(driver, backoff_steps, HOMING_RPM, not HOME_FORWARD)
+        print_samples(samples)
+        time.sleep_ms(500)
 finally:
     driver.print_status()  # before disabling, turning EN off clears the fault flags
     driver.disable()

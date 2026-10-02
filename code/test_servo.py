@@ -17,7 +17,7 @@ def set_angle(pwm, angle):
     pwm.duty_ns(int(MIN_NS + (MAX_NS - MIN_NS) * angle / 180))
 
 
-servo1 = make_servo(22)
+servo1 = make_servo(21)
 
 try:
     while True:
